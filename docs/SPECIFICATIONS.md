@@ -83,6 +83,18 @@ enum SessionType: Int16 {
 | vibrationInitial  | Int    | 初期バイブレーション強度           |
 | vibrationStep     | Int    | 振動強度増分ステップ数            |
 
+
+## 2.4 InputProvider / DecisionEngine / ActuatorController
+
+### InputProvider (Protocol)
+- メソッド: `start()`, `stop()`
+- プロパティ: `dataPublisher: AnyPublisher<RawFrame, Never>`
+
+### DecisionEngine (Protocol)
+- メソッド: `predict(_ features: FrameFeatures) -> Decision`
+
+### ActuatorController (Protocol)
+- メソッド: `trigger()`, `stop()`
 ---
 
 ## 3. サービスインターフェース
