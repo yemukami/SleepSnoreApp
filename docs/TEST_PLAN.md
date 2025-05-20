@@ -52,6 +52,13 @@
   * `saveDataCollectionMode(true)` → `loadDataCollectionMode()` が `true`
 * **テストファイル**: `ConfigStorageTests.swift`
 
+
+### 2.5 ActuatorController テスト
+- **テスト内容**: HapticActuatorController が `trigger()` で振動を発生、`stop()` で停止 
+- **ケース**:
+  - `trigger()` 呼び出し → UIFeedbackGenerator の `impactOccurred()` が呼ばれる
+  - `stop()` 呼び出し → 継続的振動が停止する（MockGenerator で検証）
+- **テストファイル**: `ActuatorControllerTests.swift`
 ---
 
 ## 3. UI テスト
@@ -106,6 +113,8 @@
         - name: Run tests
           run: xcodebuild test -scheme SleepSnoreApp -destination 'platform=iOS Simulator,name=iPhone 14,OS=16.0'
   ```
+
+  
 
 ---
 
