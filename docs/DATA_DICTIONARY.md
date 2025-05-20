@@ -83,4 +83,19 @@ enum SessionType: Int16 {
 }
 ```
 
+## 5. Internal Types
+
+### RawFrame
+| プロパティ | 型        | 説明                    |
+|-----------|-----------|-------------------------|
+| timestamp | Date      | サンプリング時刻        |
+| samples   | [Float]   | PCM 16kHz／20ms バッファ|
+
+### FrameFeatures
+| プロパティ | 型      | 説明                        |
+|-----------|---------|-----------------------------|
+| energy    | Double  | 短時間エネルギー            |
+| zcr       | Double  | ゼロ交差率                  |
+| mfcc      | [Double]| MFCC 係数リスト             |
+
 > **Note**: JSON スキーマは今後クラウド同期や外部連携を行う際に使用します。
