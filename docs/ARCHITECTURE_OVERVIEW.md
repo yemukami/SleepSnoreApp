@@ -1,84 +1,116 @@
 # ARCHITECTURE OVERVIEW
 
-本書では、SleepSnoreApp の主要コンポーネントと、それらの依存関係・データフローを図示します。プロジェクト全体の構造を把握し、拡張や保守の際に参照してください。
+本書では、SleepSnoreApp の主要コンポーネントと、それらの依存関係・データフロー、さらに処理パイプラインを示します。InputProvider レイヤーと合わせて、データ取得から判断、アクチュエーションまでの流れを可視化し、拡張性・保守性を担保する設計とします。
 
 ---
 
 ## 1. 高レベルコンポーネント図
 
 ```
-┌───────────────────────────────────────────┐
-│               SleepSnoreApp               │
-│                                           │
-│   ┌────────────┐      ┌───────────────┐  │
-│   │ HomeView   │◀─────│ HomeViewModel │  │
-│   └────────────┘      └───────────────┘  │
-│        │                       │          │
-│        ▼                       ▼          │
-│   ┌────────────┐      ┌────────────────┐ │
-│   │ SettingsView│◀────│ SettingsViewModel││
-│   └────────────┘      └────────────────┘ │
-│        │                       │          │
-│        ▼                       ▼          │
-│   ┌────────────┐      ┌────────────────┐ │
-│   │ HistoryView │◀────│ HistoryViewModel ││
-│   └────────────┘      └────────────────┘ │
-│                                           │
-│              ▲                            │
-│              │                            │
-│   ┌─────────────────────────────────┐     │
-│   │     AudioEngineManager         │     │
-│   │  (AVAudioEngine + DSP/Threshold)│     │
-│   └─────────────────────────────────┘     │
-│              ▲                            │
-│              │                            │
-│   ┌─────────────────────────────────┐     │
-│   │  PersistenceController (Core Data) │   │
-│   └─────────────────────────────────┘     │
-│              ▲                            │
-│              │                            │
-│   ┌─────────────────────────────────┐     │
-│   │       ConfigStorage (UserDefaults) │   │
-│   └─────────────────────────────────┘     │
-└───────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                     SleepSnoreApp                         │
+│                                                            │
+│  ┌───────────────────┐    ┌──────────────────────────────┐ │
+│  │   InputProvider   │───▶│ AudioEngineManager           │ │
+│  │ (Microphone/BLE)  │    │ (DSP + DecisionEngine +      │ │
+│  └───────────────────┘    │  ActuatorController)         │ │
+│            │               └──────────────────────────────┘ │
+│            ▼                                        │       │
+│  ┌───────────────────┐       ┌───────────────────────────┐ │
+│  │ PersistenceController │◀──│ ConfigStorage             │ │
+│  │   (Core Data)         │   │ (UserDefaults)            │ │
+│  └───────────────────┘       └───────────────────────────┘ │
+│            ▲                                        │       │
+│            │                                        ▼       │
+│  ┌───────────────────┐       ┌───────────────────────────┐ │
+│  │    HomeViewModel  │◀─────│      HomeView             │ │
+│  └───────────────────┘       └───────────────────────────┘ │
+│   (Settings/Historyも同様)                                  │
+└────────────────────────────────────────────────────────────┘
 ```
-
-* **View (SwiftUI)**: `HomeView`、`SettingsView`、`HistoryView` など。UI レイヤー。
-* **ViewModel**: 各 View に対応し、`@Published` でデータバインディング。
-* **AudioEngineManager**: 音声キャプチャ＋閾値判定＋セッション管理＋介入制御。
-* **PersistenceController**: Core Data ストアの管理、`Session` エンティティの CRUD と日次集計。
-* **ConfigStorage**: ユーザー設定（ThresholdConfig、DataCollectionMode）の永続化。
 
 ---
 
 ## 2. データフロー
 
-1. ユーザー操作 (`HomeView` の「開始」) → `HomeViewModel.toggleMonitoring()` 呼び出し
-2. `AudioEngineManager.start(mode:)` で録音開始 → フレームごとに DSP/閾値判定 → `snoreCount`/`apneaCount` 更新
-3. イベント終了時に `Session` エンティティを `PersistenceController` 経由で保存
-4. `HistoryViewModel.fetchSummaries()` で `Session.fetchRequestDailySummaries()` を呼び、集計結果を ViewModel に渡して画面表示
-5. 設定変更 (`SettingsView` ) → `SettingsViewModel.saveConfig()` → `ConfigStorage` と `AudioEngineManager.updateThresholds(_:)` を同期
+1. `HomeView` の「開始」操作 → `HomeViewModel.toggleMonitoring()` 呼び出し
+2. `AudioEngineManager.start(mode:)` → `InputProvider.start()` で生データ取得
+3. `AudioEngineManager` がパイプラインを経由しデータ処理
+4. `PersistenceController` による `Session` 保存
+5. `HomeViewModel` が `@Published` 更新を受け画面をリフレッシュ
+6. 設定変更時は `SettingsViewModel` → `ConfigStorage` & `AudioEngineManager.updateThresholds()` を同期
+7. `HistoryViewModel.fetchSummaries()` で日次集計を取得し `HistoryView` に表示
 
 ---
 
-## 3. 依存関係マトリクス
+## 3. 処理パイプライン
 
-| コンポーネント               | 依存先                                       |
-| --------------------- | ----------------------------------------- |
-| HomeViewModel         | AudioEngineManager, PersistenceController |
-| SettingsViewModel     | ConfigStorage, AudioEngineManager         |
-| HistoryViewModel      | PersistenceController                     |
-| AudioEngineManager    | ConfigStorage                             |
-| PersistenceController | CoreData Framework                        |
-| ConfigStorage         | Foundation (UserDefaults)                 |
-| Views (SwiftUI)       | ViewModels                                |
+### 3.1 Acquisition (データ取得)
+
+* **InputProvider** プロトコルを介して各種データソースを抽象化
+
+  ```swift
+  protocol InputProvider {
+    var dataPublisher: AnyPublisher<RawFrame, Never> { get }
+    func start()
+    func stop()
+  }
+  ```
+* 実装例: `MicrophoneInputProvider` (AVAudioEngine + AVAudioSession), `ExternalSensorInputProvider` (BLE/Wi-Fi)
+
+### 3.2 Pre-processing (前処理)
+
+* ノイズリダクション、正規化、特徴量抽出 (Energy, ZCR, MFCC)
+* Combine の `map`/`filter` 演算子でフロー制御
+
+### 3.3 Inference (判定)
+
+* **DecisionEngine** プロトコルで判定ロジックを抽象化
+
+  ```swift
+  protocol DecisionEngine {
+    func predict(_ features: FrameFeatures) -> Decision // .snore/.apnea/.none
+  }
+  ```
+* 閾値モデル or Core ML モデルを差し替え可能
+
+### 3.4 Actuation (アクチュエーション)
+
+* **ActuatorController** プロトコルで介入機能を抽象化
+
+  ```swift
+  protocol ActuatorController {
+    func trigger()
+    func stop()
+  }
+  ```
+* 実装例: `HapticActuatorController` (UIFeedbackGenerator)
+* Combine の `debounce` や `sink` で介入タイミングを制御
 
 ---
 
-## 4. 拡張ポイント
+## 4. 依存関係マトリクス
 
-* **ML モデルモジュール**: `AudioEngineManager` の判断ロジックを機械学習モデルに差し替え可能
-* **HealthKitService**: `Services/HealthKitService.swift` を追加し、HealthKit 連携を行う
-* **CloudSyncManager**: `Services/CloudSyncManager.swift` で Core Data とクラウドの同期を実装
+| コンポーネント               | 依存先                                                              |
+| --------------------- | ---------------------------------------------------------------- |
+| InputProvider         | (Platform-specific implementations)                              |
+| DecisionEngine        | (閾値モデル or ML Model)                                              |
+| ActuatorController    | UIFeedbackGenerator など                                           |
+| AudioEngineManager    | InputProvider, DecisionEngine, ActuatorController, ConfigStorage |
+| PersistenceController | Core Data Framework                                              |
+| ConfigStorage         | Foundation (UserDefaults)                                        |
+| HomeViewModel         | AudioEngineManager, PersistenceController                        |
+| SettingsViewModel     | ConfigStorage, AudioEngineManager                                |
+| HistoryViewModel      | PersistenceController                                            |
+| SwiftUI Views         | 各 ViewModel                                                      |
 
-この概要をもとに、アーキテクチャの全体感を把握し、各コンポーネント実装やリファクタリングを進めてください。
+---
+
+## 5. 拡張ポイント
+
+* **InputProvider の追加**: BLE, Wi-Fi, 外部センサーなどを容易に統合
+* **DecisionEngine の入れ替え**: 将来 ML モデルやクラシカルモデルを選択可能
+* **ActuatorController の拡張**: 音声/画面表示など異なる介入手段に対応
+* **CloudSyncManager** の導入: PersistenceController ↔ クラウド同期
+
+この設計を基に、各ステージを独立して実装・テストし、高い可読性と拡張性を持つシステムを構築してください。
